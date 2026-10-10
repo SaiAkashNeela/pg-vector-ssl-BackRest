@@ -14,6 +14,12 @@ on:
       - ".github/workflows/build-pgbackrest.yml"
   workflow_dispatch:
 
+# One build at a time, in order, so an older build can never finish last and
+# point a floating tag back at older images.
+concurrency:
+  group: build-pgbackrest
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write

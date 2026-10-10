@@ -19,6 +19,12 @@ on:
     - cron: "0 4 * * 1"  # every Monday, after Sunday's version checks
   workflow_dispatch:
 
+# One build at a time, in order, so an older build can never finish last and
+# point a floating tag back at older images.
+concurrency:
+  group: build-and-push
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
