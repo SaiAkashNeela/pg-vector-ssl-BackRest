@@ -6,6 +6,10 @@
 # as PID 1) is unchanged. This only adds:
 #   pgbackrest  - from the image's own PGDG apt source, matching its Postgres
 #   jq          - used by the backup loop to read `pgbackrest info` output
+#   ca-certificates - the base image ships no CA bundle, and pgBackRest
+#                 verifies its S3/R2/GCS/Azure endpoint's TLS certificate.
+#                 Without it every archive-push fails "unable to get local
+#                 issuer certificate" and no backup is ever taken.
 #   /usr/local/bin/pgbackrest-backup-loop.sh - optional base-backup scheduler
 #
 # pgBackRest is configured entirely through PGBACKREST_* environment
@@ -22,7 +26,7 @@ ARG PG_MAJOR=17
 FROM ${BASE_IMAGE}:pg${PG_MAJOR}
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pgbackrest jq \
+    && apt-get install -y --no-install-recommends pgbackrest jq ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && install -d -o postgres -g postgres -m 750 /var/spool/pgbackrest /var/log/pgbackrest /var/lib/pgbackrest
 
