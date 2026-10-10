@@ -108,6 +108,57 @@ A weekly workflow (every Sunday) opens a PR whenever upstream pgvector releases 
 version; merging it rebuilds and republishes all tags. Weeks with no new
 release do nothing — no PR, no rebuild, digests stay put.
 
+## pgBackRest variant
+
+`ghcr.io/saiakashneela/pgvector-ssl-pgbackrest` is the same image plus
+[pgBackRest](https://pgbackrest.org) and `jq`, for continuous WAL archiving and
+point-in-time recovery. Tags mirror the base image (`0.8.6-pg16`, `pg16`, …,
+`latest`), and it is rebuilt every time the base image is republished.
+
+Nothing is switched on by default; configure pgBackRest with `PGBACKREST_*`
+environment variables and turn archiving on in the server command. An example
+with Cloudflare R2:
+
+```yaml
+services:
+  postgres:
+    image: ghcr.io/saiakashneela/pgvector-ssl-pgbackrest:pg16
+    environment:
+      POSTGRES_PASSWORD: change-me
+      PGBACKREST_STANZA: main
+      PGBACKREST_PG1_PATH: /var/lib/postgresql/data
+      PGBACKREST_REPO1_TYPE: s3
+      PGBACKREST_REPO1_PATH: /pgbackrest
+      PGBACKREST_REPO1_S3_BUCKET: my-bucket
+      PGBACKREST_REPO1_S3_ENDPOINT: <account>.r2.cloudflarestorage.com
+      PGBACKREST_REPO1_S3_REGION: auto
+      PGBACKREST_REPO1_S3_URI_STYLE: path
+      PGBACKREST_REPO1_S3_KEY: ...
+      PGBACKREST_REPO1_S3_KEY_SECRET: ...
+      PGBACKREST_REPO1_RETENTION_FULL: "2"
+      PGBACKREST_ARCHIVE_ASYNC: "y"
+      PGBACKREST_SPOOL_PATH: /var/spool/pgbackrest
+      PGBACKREST_BACKUP_HOUR: "21"   # UTC hour for scheduled base backups
+    command: postgres -c archive_mode=on -c archive_timeout=60 -c "archive_command=pgbackrest archive-push %p"
+```
+
+Start the included scheduler beside the server, as the `postgres` user, for
+fresh base backups (a full one weekly, a differential on other days, only in
+`PGBACKREST_BACKUP_HOUR`; the very first one starts at once):
+
+```bash
+docker exec -d -u postgres <container> /usr/local/bin/pgbackrest-backup-loop.sh
+```
+
+| File | Does |
+|---|---|
+| `pgbackrest/Dockerfile` | This image on top of `pgvector-ssl:pg<major>`: `pgbackrest`, `jq`, the scheduler |
+| `pgbackrest/pgbackrest-backup-loop.sh` | Creates the stanza once Postgres is up, then keeps base backups fresh. Reads backup age from the repository, so restarts neither skip nor repeat backups |
+
+Useful commands: `pgbackrest info`, `pgbackrest check`, and
+`pgbackrest --type=time "--target=<UTC time>" restore` into a stopped,
+emptied data directory.
+
 ## How it works
 
 | File | Runs | Does |
