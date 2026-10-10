@@ -1,6 +1,10 @@
-# Builds and publishes the image to GHCR on every merge to main.
+# Builds and publishes the image to GHCR: on every merge to main, every
+# Monday (so Postgres patch releases and Debian security fixes land even when
+# nothing in this repo changed), and when another workflow dispatches it
+# (the pgvector bump and the Postgres major check do).
 # Tags per Postgres major: exact (<pgvector>-pg<major>), floating
-# (pg<major>), plus `latest` on the default major.
+# (pg<major>), plus `latest` on the default major. The majors built are the
+# ones listed in PG_MAJORS.
 name: build and push
 
 on:
@@ -9,24 +13,38 @@ on:
     paths:
       - "Dockerfile.pgvector"
       - "*.sh"
+      - "PG_MAJORS"
       - ".github/workflows/build-and-push.yml"
+  schedule:
+    - cron: "0 4 * * 1"  # every Monday, after Sunday's version checks
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
+  actions: write  # to start the pgBackRest variant's build afterwards
 
 env:
   REGISTRY_IMAGE: ghcr.io/saiakashneela/pgvector-ssl
   DEFAULT_PG_MAJOR: "17"
 
 jobs:
+  majors:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.read.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: echo "list=$(jq -cR 'split(" ") | map(select(length > 0))' < <(tr -s ' \n' ' ' < PG_MAJORS))" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: majors
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        pg_major: [16, 17, 18]
+        pg_major: ${{ fromJSON(needs.majors.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -62,7 +80,19 @@ jobs:
           file: Dockerfile.pgvector
           platforms: linux/amd64,linux/arm64
           push: true
+          # Always start from the newest upstream base and a fresh apt index.
+          pull: true
+          no-cache: true
           build-args: |
             PGVECTOR_VERSION=${{ steps.meta.outputs.version }}
             PG_MAJOR=${{ matrix.pg_major }}
           tags: ${{ steps.meta.outputs.tags }}
+
+  # The pgBackRest variant is layered on these images; rebuild it on top of them.
+  pgbackrest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run build-pgbackrest.yml --repo "${{ github.repository }}" --ref main

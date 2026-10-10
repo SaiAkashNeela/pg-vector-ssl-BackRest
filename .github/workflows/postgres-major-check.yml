@@ -1,0 +1,53 @@
+# Watches for new Postgres majors. When upstream publishes a pgvector image for
+# a major newer than any in PG_MAJORS (say pg19), it adds that major to
+# PG_MAJORS, commits to main and starts build-and-push.yml, so the new
+# <pgvector>-pg19 and pg19 tags (and the pgBackRest variant's) appear on
+# their own. Existing tags are untouched and `latest` stays on the default
+# major. Runs after the Sunday pgvector bump, so it checks the newest version.
+#
+# Commits made with GITHUB_TOKEN do not trigger other workflows, so the build
+# is started explicitly with `gh workflow run`.
+name: postgres major check
+
+on:
+  schedule:
+    - cron: "30 3 * * 0"  # every Sunday, an hour after the pgvector bump
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Look for newer majors upstream
+        id: scan
+        run: |
+          set -euo pipefail
+          ver=$(grep -E '^ARG PGVECTOR_VERSION=' Dockerfile.pgvector | cut -d= -f2)
+          have=$(tr -s ' \n' '\n' < PG_MAJORS | sort -n | tail -1)
+          upstream=$(curl -fsSL "https://hub.docker.com/v2/repositories/pgvector/pgvector/tags?page_size=100&name=${ver}-pg" \
+            | jq -r --arg v "$ver" '.results[].name | select(test("^" + ($v | gsub("\\."; "\\.")) + "-pg[0-9]+$")) | sub(".*-pg"; "")' \
+            | sort -n -u)
+          new=$(printf '%s\n' "$upstream" | awk -v have="$have" 'NF && $1 > have' | xargs)
+          echo "pgvector $ver; newest major we build: $have; upstream majors: $(echo $upstream | xargs); new: ${new:-none}"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Add the new majors and start the build
+        if: steps.scan.outputs.new != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          new="${{ steps.scan.outputs.new }}"
+          echo "$(cat PG_MAJORS) $new" | tr -s ' \n' '\n' | sort -n -u | xargs > PG_MAJORS
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PG_MAJORS
+          git commit -m "Build Postgres ${new// /, } images"
+          git push origin HEAD:main
+          gh workflow run build-and-push.yml --ref main

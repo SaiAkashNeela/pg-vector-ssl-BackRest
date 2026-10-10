@@ -35,10 +35,14 @@ ARG PGVECTOR_VERSION=0.8.6
 ARG PG_MAJOR=17
 FROM pgvector/pgvector:${PGVECTOR_VERSION}-pg${PG_MAJOR}
 
+# apt-get upgrade picks up Postgres patch releases (from the image's PGDG apt
+# source) and Debian security fixes on every rebuild, including the weekly
+# scheduled one, even when the upstream pgvector image has not been refreshed.
 # openssl generates the self-signed certificates; tini is PID 1 so the stop
 # signal reaches postgres for a clean shutdown and background helpers get
 # reaped (see ENTRYPOINT below).
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends openssl tini \
     && rm -rf /var/lib/apt/lists/*
 

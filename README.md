@@ -98,15 +98,27 @@ docker buildx build -f Dockerfile.pgvector \
 
 ## Image tags
 
-Published to `ghcr.io/saiakashneela/pgvector-ssl` on every merge to main:
+Published to `ghcr.io/saiakashneela/pgvector-ssl` for every Postgres major
+listed in `PG_MAJORS` (currently 16, 17 and 18):
 
-- `0.8.6-pg17` — exact pgvector + Postgres major (recommended for production)
-- `pg17` — latest pgvector for that Postgres major
+- `0.8.6-pg17` — exact pgvector + Postgres major
+- `pg17` — latest pgvector for that Postgres major, with the latest patches
 - `latest` — latest pgvector on the default major (17)
 
-A weekly workflow (every Sunday) opens a PR whenever upstream pgvector releases a new
-version; merging it rebuilds and republishes all tags. Weeks with no new
-release do nothing — no PR, no rebuild, digests stay put.
+Everything stays current on its own, with nothing to merge:
+
+| When | Workflow | What it does |
+|---|---|---|
+| Every merge to main | `build-and-push.yml` | Rebuilds and republishes every tag, then the pgBackRest variant |
+| Sunday 02:30 UTC | `pgvector-bump.yml` | New pgvector release with images for every major we build → bumps the version, commits, rebuilds |
+| Sunday 03:30 UTC | `postgres-major-check.yml` | Upstream has a newer Postgres major (say pg19) → adds it to `PG_MAJORS`, commits, rebuilds; new tags appear, existing ones are untouched |
+| Monday 04:00 UTC | `build-and-push.yml` | Weekly rebuild from a fresh upstream base plus `apt-get upgrade`, so Postgres patch releases and Debian security fixes land every week |
+
+The floating `pg<major>` tags therefore always carry the newest pgvector and
+the newest patch release of that major. An exact tag such as `0.8.6-pg17`
+keeps getting weekly patches only until pgvector moves on; after that it is
+frozen, so prefer `pg<major>` if you want patches without editing tags.
+Changing the default major (`latest`) is left to a person.
 
 ## pgBackRest variant
 

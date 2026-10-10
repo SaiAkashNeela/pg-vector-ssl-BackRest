@@ -1,9 +1,9 @@
 # Builds and publishes the pgBackRest variant to GHCR as
 # ghcr.io/saiakashneela/pgvector-ssl-pgbackrest. It is layered on the
-# published pgvector-ssl image, so it rebuilds whenever that image is
-# republished (workflow_run) as well as when its own files change.
+# published pgvector-ssl image, so build-and-push.yml starts it after every
+# base build; it also runs when its own files change.
 # Tags mirror the base image: <pgvector>-pg<major>, pg<major>, and `latest`
-# on the default major.
+# on the default major, for each major listed in PG_MAJORS.
 name: build and push pgbackrest
 
 on:
@@ -12,10 +12,6 @@ on:
     paths:
       - "pgbackrest/**"
       - ".github/workflows/build-pgbackrest.yml"
-  workflow_run:
-    workflows: ["build and push"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -28,14 +24,22 @@ env:
   DEFAULT_PG_MAJOR: "17"
 
 jobs:
+  majors:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.read.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: echo "list=$(jq -cR 'split(" ") | map(select(length > 0))' < <(tr -s ' \n' ' ' < PG_MAJORS))" >> "$GITHUB_OUTPUT"
+
   build:
-    # After a base build, only go ahead if it succeeded.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    needs: majors
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        pg_major: [16, 17, 18]
+        pg_major: ${{ fromJSON(needs.majors.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -73,6 +77,7 @@ jobs:
           push: true
           # Pull the base fresh: it may have been republished seconds ago.
           pull: true
+          no-cache: true
           build-args: |
             BASE_IMAGE=${{ env.BASE_IMAGE }}
             PG_MAJOR=${{ matrix.pg_major }}
