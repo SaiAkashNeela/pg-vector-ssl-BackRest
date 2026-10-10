@@ -26,7 +26,7 @@ image, plus three standalone scripts. There are no other dependencies.
 ## Quickstart
 
 ```bash
-# pgvector 0.8.6 on PostgreSQL 17
+# pgvector 0.8.7 on PostgreSQL 17
 docker build -f Dockerfile.pgvector -t postgres-ssl-pgvector:17 .
 
 docker run -d --name pgvector \
@@ -82,12 +82,12 @@ LIMIT 3;
 
 ```bash
 docker build -f Dockerfile.pgvector \
-  --build-arg PGVECTOR_VERSION=0.8.6 --build-arg PG_MAJOR=18 \
+  --build-arg PGVECTOR_VERSION=0.8.7 --build-arg PG_MAJOR=18 \
   -t postgres-ssl-pgvector:18 .
 ```
 
 Any `PGVECTOR_VERSION` × `PG_MAJOR` combo published under
-`pgvector/pgvector` on Docker Hub works (e.g. `0.8.6-pg18`). Multi-arch
+`pgvector/pgvector` on Docker Hub works (e.g. `0.8.7-pg18`). Multi-arch
 (`amd64` + `arm64`) via buildx:
 
 ```bash
@@ -101,7 +101,7 @@ docker buildx build -f Dockerfile.pgvector \
 Published to `ghcr.io/saiakashneela/pgvector-ssl` for every Postgres major
 listed in `PG_MAJORS` (currently 16, 17 and 18):
 
-- `0.8.6-pg17` — exact pgvector + Postgres major
+- `0.8.7-pg17` — exact pgvector + Postgres major
 - `pg17` — latest pgvector for that Postgres major, with the latest patches
 - `latest` — latest pgvector on the default major (17)
 
@@ -115,7 +115,7 @@ Everything stays current on its own, with nothing to merge:
 | Monday 04:00 UTC | `build-and-push.yml` | Weekly rebuild from a fresh upstream base plus `apt-get upgrade`, so Postgres patch releases and Debian security fixes land every week |
 
 The floating `pg<major>` tags therefore always carry the newest pgvector and
-the newest patch release of that major. An exact tag such as `0.8.6-pg17`
+the newest patch release of that major. An exact tag such as `0.8.7-pg17`
 keeps getting weekly patches only until pgvector moves on; after that it is
 frozen, so prefer `pg<major>` if you want patches without editing tags.
 Changing the default major (`latest`) is left to a person.
@@ -124,7 +124,7 @@ Changing the default major (`latest`) is left to a person.
 
 `ghcr.io/saiakashneela/pgvector-ssl-pgbackrest` is the same image plus
 [pgBackRest](https://pgbackrest.org) and `jq`, for continuous WAL archiving and
-point-in-time recovery. Tags mirror the base image (`0.8.6-pg16`, `pg16`, …,
+point-in-time recovery. Tags mirror the base image (`0.8.7-pg16`, `pg16`, …,
 `latest`), and it is rebuilt every time the base image is republished.
 
 Nothing is switched on by default; configure pgBackRest with `PGBACKREST_*`
