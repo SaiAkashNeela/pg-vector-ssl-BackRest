@@ -1,4 +1,7 @@
-# SSL-enabled pgvector image with the `vector` extension auto-enabled.
+# SSL-enabled pgvector image with the `vector` extension auto-enabled, and
+# (BASE_IMAGE=postgres:<major>-bookworm) the plain postgres-ssl image: the
+# same SSL and entrypoint without pgvector, where the pgvector scripts do
+# nothing.
 #
 # Built FROM the official pgvector image (itself built FROM the official
 # postgres image, so the standard docker-entrypoint.sh, gosu, pg_isready
@@ -11,9 +14,9 @@
 #                          initial databases during initdb, then rebuilds
 #                          template0 as a clone of template1.
 #   wrapper-pgvector.sh  — entrypoint: regenerates the certificate when it
-#                          is missing or expires within 30 days, keeps the
-#                          template0 clone and the vector extension ensured
-#                          every few minutes, then hands off to the official
+#                          is missing or expires within 30 days, ensures the
+#                          vector extension and the template0 clone once
+#                          per boot, then hands off to the official
 #                          entrypoint.
 #
 # Stands alone: uses no other file in this repo.
@@ -24,16 +27,18 @@
 #   docker build -f Dockerfile.pgvector \
 #     --build-arg PGVECTOR_VERSION=0.8.6 --build-arg PG_MAJOR=18 \
 #     -t postgres-ssl-pgvector:18 .
+# Plain postgres-ssl (no pgvector):
+#   docker build -f Dockerfile.pgvector \
+#     --build-arg BASE_IMAGE=postgres:17-bookworm -t postgres-ssl:17 .
 #
 # Knobs:
 #   PGVECTOR_AUTO_INSTALL_DISABLED=1 — skip auto-enable and the
 #     template1-only lock (binaries stay installed; SSL is unaffected).
-#   PGVECTOR_ENSURE_INTERVAL_SECONDS — how often the boot-time ensure
-#     re-runs (default 300; 0 = once at boot).
 #   SSL_CERT_DAYS — certificate validity period (default 820).
 ARG PGVECTOR_VERSION=0.8.7
 ARG PG_MAJOR=17
-FROM pgvector/pgvector:${PGVECTOR_VERSION}-pg${PG_MAJOR}
+ARG BASE_IMAGE=pgvector/pgvector:${PGVECTOR_VERSION}-pg${PG_MAJOR}
+FROM ${BASE_IMAGE}
 
 # apt-get upgrade picks up Postgres patch releases (from the image's PGDG apt
 # source) and Debian security fixes on every rebuild, including the weekly

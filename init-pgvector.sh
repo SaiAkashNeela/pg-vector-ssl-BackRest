@@ -11,7 +11,7 @@
 #     vector is already there.
 #
 # This is the fresh-init half. wrapper-pgvector.sh (this variant's own
-# entrypoint) is the other half: every few minutes it CREATEs where missing
+# entrypoint) is the other half: on every boot it CREATEs where missing
 # (and UPDATEs when the image's default extension version moved) in
 # template1 and in each existing connectable database, and rebuilds the
 # template0 clone when it is missing, misflagged, or stale — so volumes
@@ -23,6 +23,12 @@
 # Runs as the postgres user inside docker-entrypoint's gosu context.
 
 set -e
+
+# The postgres-ssl images (official postgres base) share these scripts but
+# carry no pgvector: nothing to do there.
+if [ ! -f "/usr/share/postgresql/${PG_MAJOR}/extension/vector.control" ]; then
+  exit 0
+fi
 
 if [ "${PGVECTOR_AUTO_INSTALL_DISABLED:-0}" = "1" ]; then
   echo "pgvector: auto-install disabled (PGVECTOR_AUTO_INSTALL_DISABLED=1); skipping"

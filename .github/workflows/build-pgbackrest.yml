@@ -1,9 +1,10 @@
-# Builds and publishes the pgBackRest variant to GHCR as
-# ghcr.io/saiakashneela/pgvector-ssl-pgbackrest. It is layered on the
-# published pgvector-ssl image, so build-and-push.yml starts it after every
-# base build; it also runs when its own files change.
-# Tags mirror the base image: <pgvector>-pg<major>, pg<major>, and `latest`
-# on the default major, for each major listed in PG_MAJORS.
+# Builds and publishes the pgBackRest variants to GHCR:
+#   pgvector-ssl-pgbackrest - on the published pgvector-ssl image
+#   postgres-ssl-pgbackrest - on the published postgres-ssl image
+# build-and-push.yml starts it after every base build; it also runs when its
+# own files change. Tags mirror the base image: <pgvector>-pg<major> (pgvector
+# only), pg<major>, and `latest` on the default major, for each major in
+# PG_MAJORS.
 name: build and push pgbackrest
 
 on:
@@ -25,8 +26,7 @@ permissions:
   packages: write
 
 env:
-  BASE_IMAGE: ghcr.io/saiakashneela/pgvector-ssl
-  REGISTRY_IMAGE: ghcr.io/saiakashneela/pgvector-ssl-pgbackrest
+  REGISTRY: ghcr.io/saiakashneela
   DEFAULT_PG_MAJOR: "17"
 
 jobs:
@@ -46,6 +46,7 @@ jobs:
       fail-fast: false
       matrix:
         pg_major: ${{ fromJSON(needs.majors.outputs.list) }}
+        flavor: [pgvector, postgres]
     steps:
       - uses: actions/checkout@v4
 
@@ -64,13 +65,23 @@ jobs:
         run: |
           set -euo pipefail
           ver=$(grep -E '^ARG PGVECTOR_VERSION=' Dockerfile.pgvector | cut -d= -f2)
+          major="${{ matrix.pg_major }}"
+          if [ "${{ matrix.flavor }}" = "pgvector" ]; then
+            base="${REGISTRY}/pgvector-ssl"
+            desc="pgvector-ssl (PostgreSQL ${major} + pgvector ${ver}, self-signed SSL) with pgBackRest and jq"
+          else
+            base="${REGISTRY}/postgres-ssl"
+            desc="postgres-ssl (PostgreSQL ${major}, self-signed SSL) with pgBackRest and jq"
+          fi
+          image="${base}-pgbackrest"
           {
-            echo "version=$ver"
+            echo "base=$base"
+            echo "desc=$desc"
             echo "tags<<EOF"
-            echo "${REGISTRY_IMAGE}:${ver}-pg${{ matrix.pg_major }}"
-            echo "${REGISTRY_IMAGE}:pg${{ matrix.pg_major }}"
-            if [ "${{ matrix.pg_major }}" = "$DEFAULT_PG_MAJOR" ]; then
-              echo "${REGISTRY_IMAGE}:latest"
+            [ "${{ matrix.flavor }}" = "pgvector" ] && echo "${image}:${ver}-pg${major}"
+            echo "${image}:pg${major}"
+            if [ "$major" = "$DEFAULT_PG_MAJOR" ]; then
+              echo "${image}:latest"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
@@ -85,9 +96,9 @@ jobs:
           pull: true
           no-cache: true
           build-args: |
-            BASE_IMAGE=${{ env.BASE_IMAGE }}
+            BASE_IMAGE=${{ steps.meta.outputs.base }}
             PG_MAJOR=${{ matrix.pg_major }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=pgvector-ssl (PostgreSQL ${{ matrix.pg_major }} + pgvector ${{ steps.meta.outputs.version }}, self-signed SSL) with pgBackRest and jq
+            org.opencontainers.image.description=${{ steps.meta.outputs.desc }}
           tags: ${{ steps.meta.outputs.tags }}

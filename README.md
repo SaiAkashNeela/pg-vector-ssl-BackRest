@@ -7,6 +7,21 @@ EXTENSION`, no certificate wrangling — build, run, store embeddings.
 Built `FROM` the official [`pgvector/pgvector`](https://hub.docker.com/r/pgvector/pgvector)
 image, plus three standalone scripts. There are no other dependencies.
 
+## The four images
+
+| Image | What it is |
+|---|---|
+| `ghcr.io/saiakashneela/postgres-ssl` | Official PostgreSQL + self-signed SSL. No pgvector. |
+| `ghcr.io/saiakashneela/postgres-ssl-pgbackrest` | `postgres-ssl` + [pgBackRest](#pgbackrest-variant) |
+| `ghcr.io/saiakashneela/pgvector-ssl` | `postgres-ssl` + pgvector, enabled in every database |
+| `ghcr.io/saiakashneela/pgvector-ssl-pgbackrest` | `pgvector-ssl` + pgBackRest |
+
+All four share the same scripts, entrypoint and SSL handling, and are built
+for every Postgres major in `PG_MAJORS`. `postgres-ssl` is built from
+`postgres:<major>-bookworm` (the same base `pgvector/pgvector` uses); the
+pgvector steps find no extension there and do nothing. Everything below about
+`vector` applies to the `pgvector-ssl` images only.
+
 ## Features
 
 - **pgvector out of the box.** The binaries come from the official image,
@@ -18,10 +33,11 @@ image, plus three standalone scripts. There are no other dependencies.
 - **Both templates carry vector.** `template0` is rebuilt as a clone of the
   seeded `template1`, so it doesn't matter which template a `CREATE
   DATABASE` names — the extension is already there.
-- **Self-healing.** A background loop (every 5 minutes by default) recreates
-  the extension wherever it's missing, refreshes the `template0` clone when
-  it drifts, and moves outdated extension catalogs forward. It only logs
-  when it actually changes something, and it can never fail your boot.
+- **Self-healing.** On every boot a background pass recreates the extension
+  wherever it's missing, moves outdated extension catalogs forward, and
+  refreshes the `template0` clone when it drifts. It only logs when it
+  actually changes something, and it can never fail your boot. No periodic
+  loop: databases created later copy a template that already has vector.
 
 ## Quickstart
 
@@ -76,7 +92,6 @@ LIMIT 3;
 | `POSTGRES_USER` / `POSTGRES_DB` | Superuser / initial database (standard postgres vars) | `postgres` |
 | `SSL_CERT_DAYS` | Certificate validity period, in days | `820` |
 | `PGVECTOR_AUTO_INSTALL_DISABLED=1` | Skip auto-enable and the `template0` upkeep (binaries stay installed; SSL unaffected) | off |
-| `PGVECTOR_ENSURE_INTERVAL_SECONDS` | How often the background ensure re-runs (`0` = once at boot) | `300` |
 
 ## Other versions
 
@@ -96,20 +111,31 @@ docker buildx build -f Dockerfile.pgvector \
   -t postgres-ssl-pgvector:17 --push .
 ```
 
+Plain postgres-ssl, from the same Dockerfile:
+
+```bash
+docker build -f Dockerfile.pgvector \
+  --build-arg BASE_IMAGE=postgres:17-bookworm -t postgres-ssl:17 .
+```
+
 ## Image tags
 
-Published to `ghcr.io/saiakashneela/pgvector-ssl` for every Postgres major
-listed in `PG_MAJORS` (currently 16, 17 and 18):
+`ghcr.io/saiakashneela/pgvector-ssl` for every Postgres major listed in
+`PG_MAJORS` (currently 16, 17 and 18):
 
 - `0.8.7-pg17` — exact pgvector + Postgres major
 - `pg17` — latest pgvector for that Postgres major, with the latest patches
 - `latest` — latest pgvector on the default major (17)
 
+`ghcr.io/saiakashneela/postgres-ssl`: `pg16`, `pg17`, `pg18` (latest patch
+release of that major) and `latest` (the default major, 17). Pin by digest
+for a fixed build.
+
 Everything stays current on its own, with nothing to merge:
 
 | When | Workflow | What it does |
 |---|---|---|
-| Every merge to main | `build-and-push.yml` | Rebuilds and republishes every tag, then the pgBackRest variant |
+| Every merge to main | `build-and-push.yml` | Rebuilds and republishes every tag of `pgvector-ssl` and `postgres-ssl`, then both pgBackRest variants |
 | Sunday 02:30 UTC | `pgvector-bump.yml` | New pgvector release with images for every major we build → bumps the version, commits, rebuilds |
 | Sunday 03:30 UTC | `postgres-major-check.yml` | Upstream has a newer Postgres major (say pg19) → adds it to `PG_MAJORS`, commits, rebuilds; new tags appear, existing ones are untouched |
 | Monday 04:00 UTC | `build-and-push.yml` | Weekly rebuild from a fresh upstream base plus `apt-get upgrade`, so Postgres patch releases and Debian security fixes land every week |
@@ -122,10 +148,12 @@ Changing the default major (`latest`) is left to a person.
 
 ## pgBackRest variant
 
-`ghcr.io/saiakashneela/pgvector-ssl-pgbackrest` is the same image plus
+`ghcr.io/saiakashneela/pgvector-ssl-pgbackrest` and
+`ghcr.io/saiakashneela/postgres-ssl-pgbackrest` are the base images plus
 [pgBackRest](https://pgbackrest.org) and `jq`, for continuous WAL archiving and
-point-in-time recovery. Tags mirror the base image (`0.8.7-pg16`, `pg16`, …,
-`latest`), and it is rebuilt every time the base image is republished.
+point-in-time recovery. Tags mirror their base image (`0.8.7-pg16` for
+pgvector only, `pg16`, …, `latest`), and they are rebuilt every time the base
+images are republished. The setup below is the same for both.
 
 Nothing is switched on by default; configure pgBackRest with `PGBACKREST_*`
 environment variables and turn archiving on in the server command. An example
@@ -178,7 +206,7 @@ emptied data directory.
 | `Dockerfile.pgvector` | build | Official pgvector base + `openssl`/`tini` + the scripts below |
 | `ssl-init.sh` | once, at initdb | Generates the CA + server cert, enables `ssl` |
 | `init-pgvector.sh` | once, at initdb | Creates `vector` in `template1`/`postgres`/`$POSTGRES_DB`, rebuilds `template0` as a clone |
-| `wrapper-pgvector.sh` | every boot (entrypoint) | Regenerates expiring certs, then a background loop keeps the extension and the `template0` clone ensured before handing off to the official entrypoint |
+| `wrapper-pgvector.sh` | every boot (entrypoint) | Regenerates expiring certs, starts a background pass (once per boot) that ensures the extension and the `template0` clone, then hands off to the official entrypoint |
 
 Certificate state and the clone stamp live alongside the data so they
 survive restarts: certs in `$PGDATA/certs`, the clone version in

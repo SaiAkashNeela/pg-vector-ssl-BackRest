@@ -1,9 +1,11 @@
-# pgvector-ssl plus pgBackRest, for continuous WAL archiving and
-# point-in-time recovery (to S3, R2, GCS, Azure or a local repository).
+# pgvector-ssl or postgres-ssl plus pgBackRest, for continuous WAL archiving
+# and point-in-time recovery (to S3, R2, GCS, Azure or a local repository).
 #
-# Built FROM this repo's published pgvector-ssl image, so everything that
-# image does (self-signed SSL, the vector extension enabled everywhere, tini
-# as PID 1) is unchanged. This only adds:
+# Built FROM this repo's published pgvector-ssl image (default) or, with
+# BASE_IMAGE=ghcr.io/saiakashneela/postgres-ssl, the plain postgres-ssl one,
+# so everything the base does (self-signed SSL, tini as PID 1, and for
+# pgvector-ssl the vector extension enabled everywhere) is unchanged. This
+# only adds:
 #   pgbackrest  - from the image's own PGDG apt source, matching its Postgres
 #   jq          - used by the backup loop to read `pgbackrest info` output
 #   ca-certificates - the base image ships no CA bundle, and pgBackRest
@@ -21,6 +23,10 @@
 # Another Postgres major:
 #   docker build -f pgbackrest/Dockerfile --build-arg PG_MAJOR=16 \
 #     -t pgvector-ssl-pgbackrest:16 pgbackrest
+# On postgres-ssl instead:
+#   docker build -f pgbackrest/Dockerfile \
+#     --build-arg BASE_IMAGE=ghcr.io/saiakashneela/postgres-ssl \
+#     -t postgres-ssl-pgbackrest:17 pgbackrest
 ARG BASE_IMAGE=ghcr.io/saiakashneela/pgvector-ssl
 ARG PG_MAJOR=17
 FROM ${BASE_IMAGE}:pg${PG_MAJOR}

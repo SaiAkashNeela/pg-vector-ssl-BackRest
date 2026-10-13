@@ -10,12 +10,14 @@
 #      an x509v3 SAN certificate or expires within 30 days) and that
 #      postgresql.conf enables ssl. Fresh clusters skip this — ssl-init.sh
 #      handles initdb.
-#   2. pgvector: fork a background ensure, repeated every
-#      PGVECTOR_ENSURE_INTERVAL_SECONDS (default 300), that keeps template0
-#      as a clone of template1 (rebuilt when missing, misflagged, or cloned
-#      from an older vector version), CREATEs the `vector` extension where
-#      missing — template1 first, so every future CREATE DATABASE inherits
-#      it — and UPDATEs an outdated vector catalog. Never fails the boot.
+#   2. pgvector: fork a background ensure, once Postgres accepts connections,
+#      that CREATEs the `vector` extension where missing — template1 first,
+#      so every future CREATE DATABASE inherits it — UPDATEs an outdated
+#      vector catalog, and then keeps template0 as a clone of template1
+#      (rebuilt when missing, misflagged, or cloned from an older vector
+#      version). Once per boot: the things it fixes (a new image version, a
+#      volume made before init-pgvector.sh) only change across a restart.
+#      Never fails the boot.
 #
 # Then runs the official docker-entrypoint.sh in the FOREGROUND (never
 # exec'd, so background helpers stay children of this shell and never of
@@ -24,8 +26,6 @@
 # Knobs:
 #   PGVECTOR_AUTO_INSTALL_DISABLED=1 — skip both vector halves (binaries
 #     stay installed).
-#   PGVECTOR_ENSURE_INTERVAL_SECONDS — how often the boot-time ensure
-#     re-runs (default 300; 0 = once at boot).
 #   SSL_CERT_DAYS — certificate validity period (default 820).
 
 set -e
@@ -116,6 +116,8 @@ EOF
 }
 
 fork_pgvector_ensure() {
+  # postgres-ssl images: same entrypoint, no pgvector installed.
+  [ -f "/usr/share/postgresql/${PG_MAJOR}/extension/vector.control" ] || return 0
   if [ "${PGVECTOR_AUTO_INSTALL_DISABLED:-0}" = "1" ]; then
     echo "pgvector-ensure: disabled (PGVECTOR_AUTO_INSTALL_DISABLED=1); skipping"
     return 0
@@ -177,24 +179,6 @@ fork_pgvector_ensure() {
         return 0
       fi
 
-      # template0 is a clone of template1 (stock template flags) on this
-      # image. Rebuild it when it is missing, its flags drifted, or it was
-      # cloned from an older vector version — so whichever template a
-      # CREATE DATABASE names, vector is already there.
-      local clone_shape clone_live_ver clone_marker_ver clone_needs_rebuild
-      clone_shape="$(_pgv_psql -qAt -d template1 -c "SELECT count(*) FROM pg_database WHERE datname = 'template0' AND datistemplate AND NOT datallowconn" 2>/dev/null)" || clone_shape=""
-      clone_live_ver="$(_pgv_psql -qAt -d template1 -c "SELECT extversion FROM pg_catalog.pg_extension WHERE extname = 'vector'" 2>/dev/null)" || clone_live_ver=""
-      clone_marker_ver=""
-      [ -f "$clone_marker" ] && clone_marker_ver="$(cat "$clone_marker" 2>/dev/null)" || true
-      clone_needs_rebuild=0
-      [ "$clone_shape" != "1" ] && clone_needs_rebuild=1
-      if [ -n "$clone_live_ver" ] && [ "$clone_marker_ver" != "vector=$clone_live_ver" ]; then
-        clone_needs_rebuild=1
-      fi
-      if [ "$clone_needs_rebuild" = "1" ]; then
-        pgvector_rebuild_template0 || true
-      fi
-
       ensure_sql="$(cat << 'ENDSQL'
 DO $body$
 DECLARE
@@ -232,21 +216,39 @@ ENDSQL
       # exist yet.
       _pgv_psql -v ON_ERROR_STOP=0 -qAt -d template1 -c "$ensure_sql" 2>&1 \
         | while IFS= read -r line; do [ -n "$line" ] && echo "pgvector-ensure: [template1] $line"; done
-      dbs=$(_pgv_psql -qAt -d template1 -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate" 2>/dev/null) || return 0
+      dbs=$(_pgv_psql -qAt -d template1 -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate" 2>/dev/null) || dbs=""
       while IFS= read -r db; do
         [ -z "$db" ] && continue
         _pgv_psql -v ON_ERROR_STOP=0 -qAt -d "$db" -c "$ensure_sql" 2>&1 \
           | while IFS= read -r line; do [ -n "$line" ] && echo "pgvector-ensure: [$db] $line"; done
       done <<< "$dbs"
+
+      # Then template0, AFTER the ensure above: it reads template1's vector
+      # version, so on a fresh or older volume one pass both creates vector
+      # and refreshes the clone. template0 is a clone of template1 (stock
+      # template flags) on this image. Rebuild it when it is missing, its flags drifted, or it was
+      # cloned from an older vector version — so whichever template a
+      # CREATE DATABASE names, vector is already there.
+      local clone_shape clone_live_ver clone_marker_ver clone_needs_rebuild
+      clone_shape="$(_pgv_psql -qAt -d template1 -c "SELECT count(*) FROM pg_database WHERE datname = 'template0' AND datistemplate AND NOT datallowconn" 2>/dev/null)" || clone_shape=""
+      clone_live_ver="$(_pgv_psql -qAt -d template1 -c "SELECT extversion FROM pg_catalog.pg_extension WHERE extname = 'vector'" 2>/dev/null)" || clone_live_ver=""
+      clone_marker_ver=""
+      [ -f "$clone_marker" ] && clone_marker_ver="$(cat "$clone_marker" 2>/dev/null)" || true
+      clone_needs_rebuild=0
+      [ "$clone_shape" != "1" ] && clone_needs_rebuild=1
+      if [ -n "$clone_live_ver" ] && [ "$clone_marker_ver" != "vector=$clone_live_ver" ]; then
+        clone_needs_rebuild=1
+      fi
+      if [ "$clone_needs_rebuild" = "1" ]; then
+        pgvector_rebuild_template0 || true
+      fi
     }
 
-    interval="${PGVECTOR_ENSURE_INTERVAL_SECONDS:-300}"
-    case "$interval" in ''|*[!0-9]*) interval=300 ;; esac
-    while true; do
-      pgvector_ensure_pass || true
-      [ "$interval" = "0" ] && exit 0
-      sleep "$interval"
-    done
+    # Once per boot is enough: new databases copy template1 (or the template0
+    # clone), so they already have vector; what this repairs (a newer image,
+    # a volume made before init-pgvector.sh) only changes across a restart.
+    # Not repeated, so a deliberate DROP EXTENSION isn't undone.
+    pgvector_ensure_pass || true
   ) &
 }
 
