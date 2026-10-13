@@ -17,6 +17,9 @@ on:
       - "*.sh"
       - "PG_MAJORS"
       - ".github/workflows/build-and-push.yml"
+      # The pgBackRest variants build after (and on top of) the base images.
+      - "pgbackrest/**"
+      - ".github/workflows/build-pgbackrest.yml"
   schedule:
     - cron: "0 4 * * 1"  # every Monday, after Sunday's version checks
   workflow_dispatch:

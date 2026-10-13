@@ -1,18 +1,14 @@
 # Builds and publishes the pgBackRest variants to GHCR:
 #   pgvector-ssl-pgbackrest - on the published pgvector-ssl image
 #   postgres-ssl-pgbackrest - on the published postgres-ssl image
-# build-and-push.yml starts it after every base build; it also runs when its
-# own files change. Tags mirror the base image: <pgvector>-pg<major> (pgvector
+# Only build-and-push.yml starts it (after every base build, including when
+# pgbackrest/ changes), so it always builds on the base images just published;
+# a push trigger of its own would race the base build. Tags mirror the base image: <pgvector>-pg<major> (pgvector
 # only), pg<major>, and `latest` on the default major, for each major in
 # PG_MAJORS.
 name: build and push pgbackrest
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "pgbackrest/**"
-      - ".github/workflows/build-pgbackrest.yml"
   workflow_dispatch:
 
 # One build at a time, in order, so an older build can never finish last and
